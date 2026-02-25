@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -34,8 +35,34 @@ DEFAULT_SEED_URLS = [
     "https://www.producthunt.com/",
     "https://www.blogdumoderateur.com/",
     "https://www.maddyness.com/",
+    "https://thenextweb.com/",
+    "https://venturebeat.com/",
+    "https://www.wired.com/",
+    "https://www.theverge.com/",
+    "https://arstechnica.com/",
+    "https://www.entrepreneur.com/",
+    "https://www.fastcompany.com/",
+    "https://www.marketingdive.com/",
+    "https://www.adweek.com/",
+    "https://www.searchenginejournal.com/",
+    "https://www.searchenginewatch.com/",
+    "https://www.socialmediatoday.com/",
+    "https://www.contentmarketinginstitute.com/",
+    "https://moz.com/blog",
+    "https://backlinko.com/blog",
+    "https://www.convinceandconvert.com/",
+    "https://www.cmswire.com/",
+    "https://www.zdnet.com/",
+    "https://www.cnet.com/",
+    "https://www.forbes.com/innovation/",
+    "https://www.inc.com/",
+    "https://www.shopify.com/blog",
+    "https://buffer.com/resources/",
+    "https://ahrefs.com/blog/",
 ]
 LOGGER = logging.getLogger("auto_employe")
+
+RETRYABLE_HTTP_CODES = {408, 425, 429, 500, 502, 503, 504}
 
 FULL_AUTO_PROFILE = {
     "max_links": 80,
@@ -186,6 +213,9 @@ def discover_urls(seed_urls: Iterable[str], max_discovered_per_seed: int) -> lis
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("[DISCOVER] Échec URL %s: %s", seed, exc)
             continue
+        if not page:
+            LOGGER.warning("[DISCOVER] Réponse vide depuis %s, aucune URL découverte.", seed)
+            continue
         fresh_links = extract_seed_links(seed, page, max_candidates=max_discovered_per_seed)
         for item in fresh_links:
             if item in seen:
@@ -195,20 +225,58 @@ def discover_urls(seed_urls: Iterable[str], max_discovered_per_seed: int) -> lis
     return discovered
 
 
-def fetch_url(url: str, timeout: int = 15) -> str:
-    LOGGER.debug("Navigation vers %s", url)
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        charset = response.headers.get_content_charset() or "utf-8"
-        payload = response.read().decode(charset, errors="replace")
-    LOGGER.debug("Navigation terminée %s | %s caractères", url, len(payload))
-    return payload
+def fetch_url(url: str, timeout: int = 15, retries: int = 2, retry_delay: float = 1.0) -> str:
+    """Télécharge une URL avec tolérance aux erreurs (incluant HTTP 403)."""
+    for attempt in range(1, retries + 2):
+        LOGGER.debug("[HTTP] Navigation vers %s (tentative %s/%s)", url, attempt, retries + 1)
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                payload = response.read().decode(charset, errors="replace")
+            LOGGER.debug("[HTTP] Navigation terminée %s | %s caractères", url, len(payload))
+            return payload
+        except urllib.error.HTTPError as exc:
+            if exc.code == 403:
+                LOGGER.warning(
+                    "[HTTP] 403 Forbidden sur %s (tentative %s/%s) -> URL ignorée, traitement continue.",
+                    url,
+                    attempt,
+                    retries + 1,
+                )
+                return ""
+            should_retry = exc.code in RETRYABLE_HTTP_CODES and attempt <= retries
+            LOGGER.warning(
+                "[HTTP] Erreur HTTP %s sur %s (tentative %s/%s)",
+                exc.code,
+                url,
+                attempt,
+                retries + 1,
+            )
+            if not should_retry:
+                raise
+        except urllib.error.URLError as exc:
+            should_retry = attempt <= retries
+            LOGGER.warning(
+                "[HTTP] Erreur réseau sur %s (tentative %s/%s): %s",
+                url,
+                attempt,
+                retries + 1,
+                exc,
+            )
+            if not should_retry:
+                raise
+        time.sleep(retry_delay * attempt)
+    return ""
 
 
 def duckduckgo_search(query: str, limit: int = 10) -> list[dict[str, str]]:
     encoded = urllib.parse.quote_plus(query)
     url = f"https://duckduckgo.com/html/?q={encoded}"
     page = fetch_url(url)
+    if not page:
+        LOGGER.warning("[SEARCH] Réponse vide pour la requête DuckDuckGo: %s", query)
+        return []
 
     blocks = re.findall(
         r'<a rel="nofollow" class="result__a" href="(?P<url>.*?)">(?P<title>.*?)</a>.*?'
@@ -315,6 +383,9 @@ def analyze_authorization(target_url: str) -> tuple[int, str, list[str]]:
     except Exception as exc:  # noqa: BLE001
         return 0, f"page inaccessible: {exc}", []
 
+    if not page:
+        return 0, "page vide ou inaccessible", []
+
     text = page.lower()
     score = 0
     notes: list[str] = []
@@ -349,9 +420,17 @@ def find_ad_spots(source_urls: Iterable[str], max_links: int, min_authorization_
     def scan_source(source: str) -> list[AdSpot]:
         LOGGER.info("[SCAN] Analyse source: %s", source)
         local_spots: list[AdSpot] = []
-        html_text = fetch_url(source)
+        try:
+            html_text = fetch_url(source)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("[SCAN] Échec source %s: %s", source, exc)
+            return local_spots
+        if not html_text:
+            LOGGER.warning("[SCAN] Source ignorée (réponse vide): %s", source)
+            return local_spots
         parser = LinkExtractor()
         parser.feed(html_text)
+        LOGGER.debug("[SCAN] %s liens détectés sur %s", len(parser.links), source)
         count = 0
         for href, text in parser.links:
             normalized = normalize_url(source, href)
@@ -650,6 +729,8 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
             LOGGER.info("[CYCLE %s] Début du cycle.", turn)
             base_urls = resolve_source_urls(getattr(args, "urls", []))
             source_urls = discover_urls(base_urls, args.discover_limit) if args.discover_urls else base_urls
+            LOGGER.debug("[CYCLE %s] URLs source de base: %s", turn, base_urls)
+            LOGGER.debug("[CYCLE %s] URLs effectivement analysées: %s", turn, source_urls)
             spots = find_ad_spots(
                 source_urls,
                 args.max_links,
@@ -661,6 +742,14 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
                 use_local_ai=args.use_local_ai,
                 local_ai_model=args.local_ai_model,
                 auto_embed=args.auto_embed,
+            )
+            auto_embed_ready = sum(1 for item in suggestions if item.get("auto_embed_ready"))
+            LOGGER.info(
+                "[CYCLE %s] spots=%s | suggestions=%s | auto_embed_ready=%s",
+                turn,
+                len(spots),
+                len(suggestions),
+                auto_embed_ready,
             )
             save_json(base.with_suffix(".json"), suggestions)
             save_csv(base.with_suffix(".csv"), suggestions)
