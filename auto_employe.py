@@ -12,7 +12,10 @@ import csv
 import html
 import itertools
 import json
+import logging
 import re
+import shutil
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -25,6 +28,7 @@ from typing import Iterable
 
 USER_AGENT = "AutoEmployeResearchBot/1.0 (+local-cli)"
 DEFAULT_AD_LIBRARY_PATH = Path("data/ad_library.json")
+LOGGER = logging.getLogger("auto_employe")
 
 PROFITABLE_KEYWORDS = {
     "saas": 8,
@@ -103,10 +107,13 @@ class LinkExtractor(HTMLParser):
 
 
 def fetch_url(url: str, timeout: int = 15) -> str:
+    LOGGER.debug("Navigation vers %s", url)
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as response:
         charset = response.headers.get_content_charset() or "utf-8"
-        return response.read().decode(charset, errors="replace")
+        payload = response.read().decode(charset, errors="replace")
+    LOGGER.debug("Navigation terminée %s | %s caractères", url, len(payload))
+    return payload
 
 
 def duckduckgo_search(query: str, limit: int = 10) -> list[dict[str, str]]:
@@ -213,8 +220,11 @@ def ad_score(anchor_text: str, target_url: str) -> tuple[int, str]:
 
 
 def find_ad_spots(source_urls: Iterable[str], max_links: int) -> list[AdSpot]:
-    spots: list[AdSpot] = []
-    for source in source_urls:
+    from concurrent.futures import ThreadPoolExecutor
+
+    def scan_source(source: str) -> list[AdSpot]:
+        LOGGER.info("[SCAN] Analyse source: %s", source)
+        local_spots: list[AdSpot] = []
         html_text = fetch_url(source)
         parser = LinkExtractor()
         parser.feed(html_text)
@@ -226,7 +236,7 @@ def find_ad_spots(source_urls: Iterable[str], max_links: int) -> list[AdSpot]:
             if urllib.parse.urlparse(normalized).netloc == urllib.parse.urlparse(source).netloc:
                 continue
             score, notes = ad_score(text, normalized)
-            spots.append(
+            local_spots.append(
                 AdSpot(
                     source_url=source,
                     outbound_url=normalized,
@@ -235,10 +245,61 @@ def find_ad_spots(source_urls: Iterable[str], max_links: int) -> list[AdSpot]:
                     notes=notes,
                 )
             )
+            LOGGER.debug(
+                "[NAV] %s -> %s | score=%s | notes=%s", source, normalized, score, notes
+            )
             count += 1
             if count >= max_links:
                 break
+        LOGGER.info("[SCAN] %s: %s opportunités collectées", source, len(local_spots))
+        return local_spots
+
+    spots: list[AdSpot] = []
+    sources = list(source_urls)
+    workers = min(8, max(1, len(sources)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for res in pool.map(scan_source, sources):
+            spots.extend(res)
     return sorted(spots, key=lambda s: s.ad_fit_score, reverse=True)
+
+
+def local_ai_rank(spot: AdSpot, ads: list[AdCreative], model: str, timeout: int = 25) -> AdCreative | None:
+    """Essaie d'utiliser une IA locale (Ollama) pour sélectionner une publicité."""
+    if not ads:
+        return None
+    if not shutil.which("ollama"):
+        return None
+
+    catalog = "\n".join(f"- {ad.name} | niche={ad.target_niche}" for ad in ads)
+    prompt = (
+        "Tu es un assistant de matching pub. Retourne uniquement le nom exact de la meilleure pub.\n"
+        f"Contexte opportunité: source={spot.source_url}, lien={spot.outbound_url}, "
+        f"ancre={spot.anchor_text}, notes={spot.notes}.\n"
+        f"Catalogue:\n{catalog}\n"
+        "Réponds avec exactement un nom présent dans le catalogue, sans texte additionnel."
+    )
+
+    cmd = ["ollama", "run", model, prompt]
+    try:
+        raw = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+            timeout=timeout,
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        LOGGER.warning("[IA-LOCAL] Échec sélection (%s): %s", model, exc)
+        return None
+
+    picked_name = raw.stdout.strip()
+    for ad in ads:
+        if ad.name == picked_name:
+            LOGGER.info("[IA-LOCAL] Sélection via %s: %s", model, ad.name)
+            return ad
+    LOGGER.warning("[IA-LOCAL] Réponse non reconnue: %s", picked_name)
+    return None
 
 
 def save_json(path: Path, payload: object) -> None:
@@ -280,19 +341,26 @@ def save_ad_library(ads: list[AdCreative], path: Path = DEFAULT_AD_LIBRARY_PATH)
     save_json(path, payload)
 
 
-def suggest_ad_placement(spots: list[AdSpot], ads: list[AdCreative]) -> list[dict[str, object]]:
+def suggest_ad_placement(
+    spots: list[AdSpot],
+    ads: list[AdCreative],
+    use_local_ai: bool = False,
+    local_ai_model: str = "llama3.2",
+) -> list[dict[str, object]]:
     suggestions: list[dict[str, object]] = []
     if not ads:
         return suggestions
 
     for spot in spots:
         spot_text = f"{spot.anchor_text} {spot.notes} {spot.outbound_url}".lower()
-        ranked_ads = sorted(
-            ads,
-            key=lambda ad: int(ad.target_niche.lower() in spot_text),
-            reverse=True,
-        )
+        ranked_ads = sorted(ads, key=lambda ad: int(ad.target_niche.lower() in spot_text), reverse=True)
         picked = ranked_ads[0]
+        decision_engine = "heuristique"
+        if use_local_ai:
+            ai_pick = local_ai_rank(spot, ads, model=local_ai_model)
+            if ai_pick is not None:
+                picked = ai_pick
+                decision_engine = f"ia-locale:{local_ai_model}"
         suggestions.append(
             {
                 "source_url": spot.source_url,
@@ -301,6 +369,7 @@ def suggest_ad_placement(spots: list[AdSpot], ads: list[AdCreative]) -> list[dic
                 "selected_ad": picked.name,
                 "target_niche": picked.target_niche,
                 "embed_code": picked.embed_code,
+                "decision_engine": decision_engine,
                 "notes": (
                     "Suggestion uniquement: valider les autorisations du site avant "
                     "toute publication manuelle."
@@ -390,16 +459,29 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
     print("[INFO] Automatisation lancée.")
     print("[INFO] Mode infini actif: Ctrl+C pour arrêter proprement.")
     print("[INFO] Le programme ne publie rien automatiquement: il propose des emplacements.")
+    print(
+        "[INFO] Moteur de décision: "
+        + (f"IA locale ({args.local_ai_model})" if args.use_local_ai else "Heuristique locale")
+    )
 
     try:
         for turn in cycle:
+            cycle_started = time.perf_counter()
+            LOGGER.info("[CYCLE %s] Début du cycle.", turn)
             spots = find_ad_spots(args.urls, args.max_links)
-            suggestions = suggest_ad_placement(spots, ads)
+            suggestions = suggest_ad_placement(
+                spots,
+                ads,
+                use_local_ai=args.use_local_ai,
+                local_ai_model=args.local_ai_model,
+            )
             save_json(base.with_suffix(".json"), suggestions)
             save_csv(base.with_suffix(".csv"), suggestions)
+            cycle_elapsed = time.perf_counter() - cycle_started
             print(
                 f"[CYCLE {turn}] {len(suggestions)} suggestions générées. "
                 f"Fichiers: {base.with_suffix('.json')} / {base.with_suffix('.csv')}"
+                f" | durée={cycle_elapsed:.2f}s"
             )
             if not args.forever:
                 break
@@ -522,6 +604,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_auto.add_argument("--library", default=str(DEFAULT_AD_LIBRARY_PATH), help="Chemin bibliothèque")
     p_auto.add_argument("--interval", type=int, default=300, help="Intervalle entre cycles")
     p_auto.add_argument(
+        "--use-local-ai",
+        action="store_true",
+        help="Utilise une IA locale (Ollama) pour choisir la meilleure pub quand disponible",
+    )
+    p_auto.add_argument(
+        "--local-ai-model",
+        default="llama3.2",
+        help="Modèle Ollama à utiliser pour le matching pub (défaut: llama3.2)",
+    )
+    p_auto.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Niveau de logs détaillés dans le terminal",
+    )
+    p_auto.add_argument(
         "--forever",
         action="store_true",
         help="Boucle infinie (sinon un seul cycle)",
@@ -537,6 +635,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    logging.basicConfig(
+        level=getattr(logging, str(getattr(args, "log_level", "INFO")).upper(), logging.INFO),
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
     try:
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
