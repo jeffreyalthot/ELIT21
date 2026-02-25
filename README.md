@@ -42,16 +42,22 @@ Publicités stockées dans `data/ad_library.json`.
 
 ### 3) Lancer l'automatisation
 
-Un cycle unique:
+Un cycle unique (avec logs détaillés):
 
 ```bash
-python3 auto_employe.py auto-run https://example.com https://another-site.com
+python3 auto_employe.py auto-run https://example.com https://another-site.com --log-level DEBUG
 ```
 
 Mode boucle infinie:
 
 ```bash
 python3 auto_employe.py auto-run https://example.com --forever --interval 300
+```
+
+Mode IA locale (si [Ollama](https://ollama.com) est installé localement):
+
+```bash
+python3 auto_employe.py auto-run https://example.com --use-local-ai --local-ai-model llama3.2
 ```
 
 Sorties générées dans `outputs/`:
@@ -64,13 +70,15 @@ Sorties générées dans `outputs/`:
 - `adspots` : repère des emplacements potentiels depuis des URLs.
 - `ads-add` : ajoute une pub à la bibliothèque locale.
 - `ads-list` : liste les publicités disponibles.
-- `auto-run` : propose automatiquement des placements (un cycle ou boucle infinie).
+- `auto-run` : propose automatiquement des placements (un cycle ou boucle infinie), avec logs détaillés et moteur IA locale optionnel.
 - `menu` : interface CLI interactive à choix numérotés.
 
 ## Notes
 
 - Les scores sont heuristiques (mots-clés pondérés), donc **aide à la décision**, pas vérité absolue.
 - Le mode infini sert à **surveiller** en continu et à générer des suggestions.
+- `auto-run` parallélise l'analyse de plusieurs URLs pour améliorer les performances.
+- L'option `--use-local-ai` tente un matching via IA locale (Ollama), avec fallback heuristique si indisponible.
 - Pour un usage pro, ajoutez:
   - anti-duplication des opportunités,
   - enrichissement CRM,

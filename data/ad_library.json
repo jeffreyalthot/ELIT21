@@ -1,7 +1,47 @@
 [
   {
-    "name": "Zodiac Casino 125x125",
+    "name": "Zodiac Casino 125x125 FR EUR",
     "target_niche": "casino",
-    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=zc&aff_id=aff117113\" target=\"_blank\" title=\"Zodiac Casino\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/zc/zc_125x125_291010_seasongreeting-xmas-fr-cad.gif/image.aspx\" alt=\"Zodiac Casino\">\n</a>\n<!-- Embed Code End -->"
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=zc&aff_id=aff117113\" target=\"_blank\" title=\"fr.zodiaccasino.eu\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/zc/zc_125x125_291010_seasongreeting-xmas-fr-eur.gif/image.aspx\" alt=\"fr.zodiaccasino.eu\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Zodiac Casino 234x60 FR CAD Holiday",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=zc&aff_id=aff117113\" target=\"_blank\" title=\"fr.zodiaccasino.eu\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/zc/zc_234x60_291010_holiday-xmas-fr-cad.gif/image.aspx\" alt=\"fr.zodiaccasino.eu\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Zodiac Casino 234x60 FR CAD Season",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=zc&aff_id=aff117113\" target=\"_blank\" title=\"Zodiac Casino\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/zc/zc_234x60_291010_seasongreeting-xmas-fr-cad.gif/image.aspx\" alt=\"Zodiac Casino\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Zodiac Casino 728x90 MegaMoolah",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=zc&aff_id=aff117113\" target=\"_blank\" title=\"Zodiac Casino\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/ZC/zc_728x90_110117_megamoolah-en-multi.gif/image.aspx\" alt=\"Zodiac Casino\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Luxury Casino 728x90 MegaMoolah",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=lxc&aff_id=aff117113\" target=\"_blank\" title=\"luxurycasino.com\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/LXC/lxc_728x90_130116_megamoolah-en-multi.gif/image.aspx\" alt=\"luxurycasino.com\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Luxury Casino 120x600 DE EUR",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=LXC&aff_id=aff117113\" target=\"_blank\" title=\"Luxury Casino\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/LXC/lxc_120x600_040315_megamoolah-de-eur.gif/image.aspx\" alt=\"Luxury Casino\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Luxury Casino 125x125 DE EUR",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=LXC&aff_id=aff117113\" target=\"_blank\" title=\"Luxury Casino\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/LXC/lxc_125x125_040315_megamoolah-de-eur.gif/image.aspx\" alt=\"Luxury Casino\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Phoenician Casino 120x600 EUR",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=phc&aff_id=aff117113\" target=\"_blank\" title=\"phoeniciancasino.eu\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/phc/phc_120x600_231106_eur-mool.gif/image.aspx\" alt=\"phoeniciancasino.eu\">\n</a>\n<!-- Embed Code End -->"
+  },
+  {
+    "name": "Phoenician Casino 468x60 Jackpot",
+    "target_niche": "casino",
+    "embed_code": "<!-- Embed Code Start -->\n<a href=\"https://iredirect.net/referral/?site=phc&aff_id=aff117113\" target=\"_blank\" title=\"phoeniciancasino.eu\" rel=\"nofollow\">\n    <img border=\"0\" src=\"//www.rewardsaffiliates.com/getbanner/phc/phc_468x60_230707_jackpot-megamoolah.gif/image.aspx\" alt=\"phoeniciancasino.eu\">\n</a>\n<!-- Embed Code End -->"
   }
 ]
