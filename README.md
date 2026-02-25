@@ -27,12 +27,8 @@ Sans argument, le programme passe automatiquement en mode `auto-run` **infini** 
 - tentative IA locale (Ollama) activée avec fallback heuristique,
 - payload d'insertion (`--auto-embed`) activé,
 - profil `--full-auto` appliqué (logs `DEBUG`, `--max-links 80`, `--discover-limit 40`, `--min-authorization-score 0`, `--interval 120`),
-- URLs de départ par défaut:
-  - `https://news.ycombinator.com/`
-  - `https://techcrunch.com/`
-  - `https://www.producthunt.com/`
-  - `https://www.blogdumoderateur.com/`
-  - `https://www.maddyness.com/`
+- URLs de départ par défaut: **29 URLs** (les 5 historiques + 24 nouvelles URLs marketing/tech pour une base plus large),
+- résilience HTTP renforcée: en cas de `403 Forbidden`, l'URL est ignorée et l'automatisation continue sans interruption.
 
 Si la bibliothèque pub est vide, une publicité de démarrage est créée automatiquement dans `data/ad_library.json`.
 
