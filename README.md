@@ -26,6 +26,7 @@ Sans argument, le programme passe automatiquement en mode `auto-run` **infini** 
 - découverte d'URLs activée,
 - tentative IA locale (Ollama) activée avec fallback heuristique,
 - payload d'insertion (`--auto-embed`) activé,
+- profil `--full-auto` appliqué (logs `DEBUG`, `--max-links 80`, `--discover-limit 40`, `--min-authorization-score 0`, `--interval 120`),
 - URLs de départ par défaut:
   - `https://news.ycombinator.com/`
   - `https://techcrunch.com/`
@@ -74,6 +75,12 @@ python3 auto_employe.py auto-run https://example.com --forever --interval 300
 ```
 
 Si aucune URL n'est fournie à `auto-run`, les URLs de départ par défaut sont utilisées automatiquement.
+
+Profil full auto explicite (active toutes les options d'automatisation):
+
+```bash
+python3 auto_employe.py auto-run --full-auto
+```
 
 Mode IA locale (si [Ollama](https://ollama.com) est installé localement):
 

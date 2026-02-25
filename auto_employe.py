@@ -37,6 +37,19 @@ DEFAULT_SEED_URLS = [
 ]
 LOGGER = logging.getLogger("auto_employe")
 
+FULL_AUTO_PROFILE = {
+    "max_links": 80,
+    "interval": 120,
+    "forever": True,
+    "discover_urls": True,
+    "discover_limit": 40,
+    "min_authorization_score": 0,
+    "auto_embed": True,
+    "use_local_ai": True,
+    "local_ai_model": "llama3.2",
+    "log_level": "DEBUG",
+}
+
 PROFITABLE_KEYWORDS = {
     "saas": 8,
     "assurance": 10,
@@ -665,6 +678,22 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def apply_full_auto_profile(args: argparse.Namespace) -> argparse.Namespace:
+    """Active un profil agressif qui exploite toutes les options de `auto-run`."""
+    if getattr(args, "command", None) != "auto-run":
+        return args
+    for key, value in FULL_AUTO_PROFILE.items():
+        setattr(args, key, value)
+    if not getattr(args, "urls", None):
+        args.urls = list(DEFAULT_SEED_URLS)
+    print(
+        "[INFO] Profil full-auto activé: "
+        "--discover-urls --discover-limit 40 --use-local-ai --auto-embed "
+        "--min-authorization-score 0 --max-links 80 --interval 120 --forever --log-level DEBUG"
+    )
+    return args
+
+
 def ask_choice(prompt: str, choices: dict[str, str]) -> str:
     print(prompt)
     for key, label in choices.items():
@@ -810,6 +839,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_auto.add_argument("--library", default=str(DEFAULT_AD_LIBRARY_PATH), help="Chemin bibliothèque")
     p_auto.add_argument("--interval", type=int, default=300, help="Intervalle entre cycles")
     p_auto.add_argument(
+        "--full-auto",
+        action="store_true",
+        help=(
+            "Force un profil maximal qui exploite toutes les options auto-run "
+            "(découverte URL, IA locale, payload auto-embed, logs DEBUG, boucle infinie, etc.)"
+        ),
+    )
+    p_auto.add_argument(
         "--use-local-ai",
         action="store_true",
         help="Utilise une IA locale (Ollama) pour choisir la meilleure pub quand disponible",
@@ -867,21 +904,24 @@ def main(argv: list[str] | None = None) -> int:
         args = argparse.Namespace(
             command="auto-run",
             func=cmd_auto_run,
+            full_auto=True,
             urls=list(DEFAULT_SEED_URLS),
-            max_links=40,
+            max_links=FULL_AUTO_PROFILE["max_links"],
             output_dir="outputs",
             library=str(DEFAULT_AD_LIBRARY_PATH),
-            interval=300,
-            forever=True,
-            discover_urls=True,
-            discover_limit=20,
-            min_authorization_score=3,
-            auto_embed=True,
-            use_local_ai=True,
-            local_ai_model="llama3.2",
-            log_level="INFO",
+            interval=FULL_AUTO_PROFILE["interval"],
+            forever=FULL_AUTO_PROFILE["forever"],
+            discover_urls=FULL_AUTO_PROFILE["discover_urls"],
+            discover_limit=FULL_AUTO_PROFILE["discover_limit"],
+            min_authorization_score=FULL_AUTO_PROFILE["min_authorization_score"],
+            auto_embed=FULL_AUTO_PROFILE["auto_embed"],
+            use_local_ai=FULL_AUTO_PROFILE["use_local_ai"],
+            local_ai_model=FULL_AUTO_PROFILE["local_ai_model"],
+            log_level=FULL_AUTO_PROFILE["log_level"],
         )
         print("[INFO] Aucun argument détecté: démarrage en mode full auto infini.")
+    if getattr(args, "command", None) == "auto-run" and getattr(args, "full_auto", False):
+        args = apply_full_auto_profile(args)
     logging.basicConfig(
         level=getattr(logging, str(getattr(args, "log_level", "INFO")).upper(), logging.INFO),
         format="%(asctime)s | %(levelname)s | %(message)s",
