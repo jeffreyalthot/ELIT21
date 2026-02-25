@@ -155,6 +155,20 @@ class LinkExtractor(HTMLParser):
         self._current_href = None
         self._current_text = []
 
+def safe_feed_parser(parser: HTMLParser, content: str, context_url: str, parser_name: str) -> bool:
+    """Alimente un parser HTML en tolérant les contenus malformés."""
+    try:
+        parser.feed(content)
+    except Exception as exc:  # noqa: BLE001
+        LOGGER.warning(
+            "[PARSE] Contenu ignoré pour %s (%s): %s",
+            context_url,
+            parser_name,
+            exc,
+        )
+        return False
+    return True
+
 
 class SlotExtractor(HTMLParser):
     """Extrait des sélecteurs candidats pour insertion publicitaire."""
@@ -180,7 +194,8 @@ class SlotExtractor(HTMLParser):
 
 def extract_seed_links(source_url: str, html_text: str, max_candidates: int = 20) -> list[str]:
     parser = LinkExtractor()
-    parser.feed(html_text)
+    if not safe_feed_parser(parser, html_text, source_url, "LinkExtractor"):
+        return []
     base_domain = urllib.parse.urlparse(source_url).netloc
     candidates: list[str] = []
     seen: set[str] = set()
@@ -405,7 +420,8 @@ def analyze_authorization(target_url: str) -> tuple[int, str, list[str]]:
             notes.append(marker)
 
     parser = SlotExtractor()
-    parser.feed(page)
+    if not safe_feed_parser(parser, page, target_url, "SlotExtractor"):
+        return 0, "contenu malformé, analyse partielle", []
     insertion_points = list(dict.fromkeys(parser.points))[:10]
     if insertion_points:
         score += min(4, len(insertion_points))
@@ -429,7 +445,8 @@ def find_ad_spots(source_urls: Iterable[str], max_links: int, min_authorization_
             LOGGER.warning("[SCAN] Source ignorée (réponse vide): %s", source)
             return local_spots
         parser = LinkExtractor()
-        parser.feed(html_text)
+        if not safe_feed_parser(parser, html_text, source, "LinkExtractor"):
+            return local_spots
         LOGGER.debug("[SCAN] %s liens détectés sur %s", len(parser.links), source)
         count = 0
         for href, text in parser.links:
