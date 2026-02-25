@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import itertools
 import json
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Iterable
 
 USER_AGENT = "AutoEmployeResearchBot/1.0 (+local-cli)"
+DEFAULT_AD_LIBRARY_PATH = Path("data/ad_library.json")
 
 PROFITABLE_KEYWORDS = {
     "saas": 8,
@@ -59,6 +62,13 @@ class AdSpot:
     anchor_text: str
     ad_fit_score: int
     notes: str
+
+
+@dataclass
+class AdCreative:
+    name: str
+    target_niche: str
+    embed_code: str
 
 
 class LinkExtractor(HTMLParser):
@@ -247,6 +257,59 @@ def save_csv(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def load_ad_library(path: Path = DEFAULT_AD_LIBRARY_PATH) -> list[AdCreative]:
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    ads: list[AdCreative] = []
+    for item in raw:
+        ads.append(
+            AdCreative(
+                name=str(item.get("name", "Sans nom")),
+                target_niche=str(item.get("target_niche", "general")),
+                embed_code=str(item.get("embed_code", "")).strip(),
+            )
+        )
+    return ads
+
+
+def save_ad_library(ads: list[AdCreative], path: Path = DEFAULT_AD_LIBRARY_PATH) -> None:
+    payload = [
+        {"name": ad.name, "target_niche": ad.target_niche, "embed_code": ad.embed_code} for ad in ads
+    ]
+    save_json(path, payload)
+
+
+def suggest_ad_placement(spots: list[AdSpot], ads: list[AdCreative]) -> list[dict[str, object]]:
+    suggestions: list[dict[str, object]] = []
+    if not ads:
+        return suggestions
+
+    for spot in spots:
+        spot_text = f"{spot.anchor_text} {spot.notes} {spot.outbound_url}".lower()
+        ranked_ads = sorted(
+            ads,
+            key=lambda ad: int(ad.target_niche.lower() in spot_text),
+            reverse=True,
+        )
+        picked = ranked_ads[0]
+        suggestions.append(
+            {
+                "source_url": spot.source_url,
+                "outbound_url": spot.outbound_url,
+                "ad_fit_score": spot.ad_fit_score,
+                "selected_ad": picked.name,
+                "target_niche": picked.target_niche,
+                "embed_code": picked.embed_code,
+                "notes": (
+                    "Suggestion uniquement: valider les autorisations du site avant "
+                    "toute publication manuelle."
+                ),
+            }
+        )
+    return suggestions
+
+
 def cmd_niches(args: argparse.Namespace) -> int:
     results = research_niches(args.topic, args.limit)
     payload = [
@@ -295,6 +358,130 @@ def cmd_adspots(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ads_add(args: argparse.Namespace) -> int:
+    ads = load_ad_library(Path(args.library))
+    ads.append(AdCreative(name=args.name, target_niche=args.niche, embed_code=args.embed_code))
+    save_ad_library(ads, Path(args.library))
+    print(f"[OK] Publicité ajoutée: {args.name}")
+    return 0
+
+
+def cmd_ads_list(args: argparse.Namespace) -> int:
+    ads = load_ad_library(Path(args.library))
+    if not ads:
+        print("[INFO] Aucune publicité enregistrée.")
+        return 0
+    print(f"[OK] {len(ads)} publicité(s) disponibles:")
+    for idx, ad in enumerate(ads, start=1):
+        print(f"{idx:>2}. {ad.name} | niche={ad.target_niche}")
+    return 0
+
+
+def cmd_auto_run(args: argparse.Namespace) -> int:
+    ads = load_ad_library(Path(args.library))
+    if not ads:
+        print("[ERREUR] Bibliothèque de publicités vide. Ajoutez-en avec 'ads-add'.")
+        return 1
+
+    cycle = itertools.count(1)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    base = Path(args.output_dir) / f"auto-placements-{timestamp}"
+
+    print("[INFO] Automatisation lancée.")
+    print("[INFO] Mode infini actif: Ctrl+C pour arrêter proprement.")
+    print("[INFO] Le programme ne publie rien automatiquement: il propose des emplacements.")
+
+    try:
+        for turn in cycle:
+            spots = find_ad_spots(args.urls, args.max_links)
+            suggestions = suggest_ad_placement(spots, ads)
+            save_json(base.with_suffix(".json"), suggestions)
+            save_csv(base.with_suffix(".csv"), suggestions)
+            print(
+                f"[CYCLE {turn}] {len(suggestions)} suggestions générées. "
+                f"Fichiers: {base.with_suffix('.json')} / {base.with_suffix('.csv')}"
+            )
+            if not args.forever:
+                break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        print("\n[INFO] Arrêt demandé par l'utilisateur.")
+    return 0
+
+
+def ask_choice(prompt: str, choices: dict[str, str]) -> str:
+    print(prompt)
+    for key, label in choices.items():
+        print(f"{key}. {label}")
+    while True:
+        selected = input("Choix: ").strip()
+        if selected in choices:
+            return selected
+        print("Choix invalide, recommencez.")
+
+
+def cmd_menu(_: argparse.Namespace) -> int:
+    while True:
+        selection = ask_choice(
+            "\n=== Menu AutoEmploye ===",
+            {
+                "1": "Recherche de niches",
+                "2": "Recherche d'emplacements publicitaires",
+                "3": "Ajouter une publicité",
+                "4": "Lister les publicités",
+                "5": "Lancer l'automatisation (mode infini)",
+                "0": "Quitter",
+            },
+        )
+
+        if selection == "0":
+            print("Au revoir.")
+            return 0
+
+        if selection == "1":
+            topic = input("Sujet: ").strip()
+            limit = int(input("Nombre max de résultats (défaut 15): ").strip() or "15")
+            cmd_niches(argparse.Namespace(topic=topic, limit=limit, output_dir="outputs"))
+        elif selection == "2":
+            urls = input("URLs (séparées par espace): ").split()
+            max_links = int(input("Liens max par page (défaut 40): ").strip() or "40")
+            cmd_adspots(argparse.Namespace(urls=urls, max_links=max_links, output_dir="outputs"))
+        elif selection == "3":
+            name = input("Nom de la publicité: ").strip()
+            niche = input("Niche cible: ").strip() or "general"
+            print("Collez le code embed puis tapez une ligne contenant uniquement END")
+            lines: list[str] = []
+            while True:
+                line = input()
+                if line.strip() == "END":
+                    break
+                lines.append(line)
+            cmd_ads_add(
+                argparse.Namespace(
+                    name=name,
+                    niche=niche,
+                    embed_code="\n".join(lines),
+                    library=str(DEFAULT_AD_LIBRARY_PATH),
+                )
+            )
+        elif selection == "4":
+            cmd_ads_list(argparse.Namespace(library=str(DEFAULT_AD_LIBRARY_PATH)))
+        elif selection == "5":
+            urls = input("URLs (séparées par espace): ").split()
+            max_links = int(input("Liens max par page (défaut 40): ").strip() or "40")
+            interval = int(input("Intervalle entre cycles en secondes (défaut 300): ").strip() or "300")
+            cmd_auto_run(
+                argparse.Namespace(
+                    urls=urls,
+                    max_links=max_links,
+                    output_dir="outputs",
+                    library=str(DEFAULT_AD_LIBRARY_PATH),
+                    interval=interval,
+                    forever=True,
+                )
+            )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="auto-employe",
@@ -316,6 +503,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_ad.add_argument("--max-links", type=int, default=40, help="Liens sortants max par page")
     p_ad.add_argument("--output-dir", default="outputs", help="Dossier d'export")
     p_ad.set_defaults(func=cmd_adspots)
+
+    p_ads_add = sub.add_parser("ads-add", help="Ajoute une publicité dans la bibliothèque locale")
+    p_ads_add.add_argument("--name", required=True, help="Nom interne de la publicité")
+    p_ads_add.add_argument("--niche", default="general", help="Niche cible")
+    p_ads_add.add_argument("--embed-code", required=True, help="Code d'intégration publicitaire")
+    p_ads_add.add_argument("--library", default=str(DEFAULT_AD_LIBRARY_PATH), help="Chemin bibliothèque")
+    p_ads_add.set_defaults(func=cmd_ads_add)
+
+    p_ads_list = sub.add_parser("ads-list", help="Liste les publicités de la bibliothèque")
+    p_ads_list.add_argument("--library", default=str(DEFAULT_AD_LIBRARY_PATH), help="Chemin bibliothèque")
+    p_ads_list.set_defaults(func=cmd_ads_list)
+
+    p_auto = sub.add_parser("auto-run", help="Lance l'automatisation et propose des placements")
+    p_auto.add_argument("urls", nargs="+", help="URLs sources à analyser")
+    p_auto.add_argument("--max-links", type=int, default=40, help="Liens sortants max par page")
+    p_auto.add_argument("--output-dir", default="outputs", help="Dossier d'export")
+    p_auto.add_argument("--library", default=str(DEFAULT_AD_LIBRARY_PATH), help="Chemin bibliothèque")
+    p_auto.add_argument("--interval", type=int, default=300, help="Intervalle entre cycles")
+    p_auto.add_argument(
+        "--forever",
+        action="store_true",
+        help="Boucle infinie (sinon un seul cycle)",
+    )
+    p_auto.set_defaults(func=cmd_auto_run)
+
+    p_menu = sub.add_parser("menu", help="Interface interactive avec options numérotées")
+    p_menu.set_defaults(func=cmd_menu)
 
     return parser
 
