@@ -16,6 +16,25 @@ Un programme terminal (100% local) pour automatiser une partie de la prospection
 
 ## Utilisation rapide
 
+### 0) Mode full auto par défaut (sans aucune option)
+
+```bash
+python3 auto_employe.py
+```
+
+Sans argument, le programme passe automatiquement en mode `auto-run` **infini** avec:
+- découverte d'URLs activée,
+- tentative IA locale (Ollama) activée avec fallback heuristique,
+- payload d'insertion (`--auto-embed`) activé,
+- URLs de départ par défaut:
+  - `https://news.ycombinator.com/`
+  - `https://techcrunch.com/`
+  - `https://www.producthunt.com/`
+  - `https://www.blogdumoderateur.com/`
+  - `https://www.maddyness.com/`
+
+Si la bibliothèque pub est vide, une publicité de démarrage est créée automatiquement dans `data/ad_library.json`.
+
 ### 1) Menu interactif (options numérotées)
 
 ```bash
@@ -53,6 +72,8 @@ Mode boucle infinie:
 ```bash
 python3 auto_employe.py auto-run https://example.com --forever --interval 300
 ```
+
+Si aucune URL n'est fournie à `auto-run`, les URLs de départ par défaut sont utilisées automatiquement.
 
 Mode IA locale (si [Ollama](https://ollama.com) est installé localement):
 

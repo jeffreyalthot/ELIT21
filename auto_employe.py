@@ -28,6 +28,13 @@ from typing import Iterable
 
 USER_AGENT = "AutoEmployeResearchBot/1.0 (+local-cli)"
 DEFAULT_AD_LIBRARY_PATH = Path("data/ad_library.json")
+DEFAULT_SEED_URLS = [
+    "https://news.ycombinator.com/",
+    "https://techcrunch.com/",
+    "https://www.producthunt.com/",
+    "https://www.blogdumoderateur.com/",
+    "https://www.maddyness.com/",
+]
 LOGGER = logging.getLogger("auto_employe")
 
 PROFITABLE_KEYWORDS = {
@@ -450,6 +457,30 @@ def load_ad_library(path: Path = DEFAULT_AD_LIBRARY_PATH) -> list[AdCreative]:
     return ads
 
 
+def load_or_bootstrap_ads(path: Path = DEFAULT_AD_LIBRARY_PATH) -> list[AdCreative]:
+    ads = load_ad_library(path)
+    if ads:
+        return ads
+    fallback = [
+        AdCreative(
+            name="AutoEmploye Starter Banner",
+            target_niche="general",
+            embed_code=(
+                "<div class=\"auto-employe-ad\" style=\"padding:12px;border:1px solid #ddd;\">"
+                "<strong>Votre publicité</strong><p>Remplacez ce bloc avec votre code officiel.</p></div>"
+            ),
+        )
+    ]
+    save_ad_library(fallback, path)
+    LOGGER.warning("[AUTO] Bibliothèque vide: création d'une publicité par défaut dans %s", path)
+    return fallback
+
+
+def resolve_source_urls(urls: Iterable[str] | None) -> list[str]:
+    cleaned = [item.strip() for item in (urls or []) if item.strip()]
+    return cleaned or list(DEFAULT_SEED_URLS)
+
+
 def save_ad_library(ads: list[AdCreative], path: Path = DEFAULT_AD_LIBRARY_PATH) -> None:
     payload = [
         {"name": ad.name, "target_niche": ad.target_niche, "embed_code": ad.embed_code} for ad in ads
@@ -534,7 +565,8 @@ def cmd_niches(args: argparse.Namespace) -> int:
 
 
 def cmd_adspots(args: argparse.Namespace) -> int:
-    source_urls = discover_urls(args.urls, args.discover_limit) if args.discover_urls else args.urls
+    base_urls = resolve_source_urls(getattr(args, "urls", []))
+    source_urls = discover_urls(base_urls, args.discover_limit) if args.discover_urls else base_urls
     spots = find_ad_spots(
         source_urls,
         args.max_links,
@@ -585,10 +617,7 @@ def cmd_ads_list(args: argparse.Namespace) -> int:
 
 
 def cmd_auto_run(args: argparse.Namespace) -> int:
-    ads = load_ad_library(Path(args.library))
-    if not ads:
-        print("[ERREUR] Bibliothèque de publicités vide. Ajoutez-en avec 'ads-add'.")
-        return 1
+    ads = load_or_bootstrap_ads(Path(args.library))
 
     cycle = itertools.count(1)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -606,7 +635,8 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
         for turn in cycle:
             cycle_started = time.perf_counter()
             LOGGER.info("[CYCLE %s] Début du cycle.", turn)
-            source_urls = discover_urls(args.urls, args.discover_limit) if args.discover_urls else args.urls
+            base_urls = resolve_source_urls(getattr(args, "urls", []))
+            source_urls = discover_urls(base_urls, args.discover_limit) if args.discover_urls else base_urls
             spots = find_ad_spots(
                 source_urls,
                 args.max_links,
@@ -731,7 +761,7 @@ def build_parser() -> argparse.ArgumentParser:
             "où proposer de la publicité (URL publiques)."
         ),
     )
-    sub = parser.add_subparsers(dest="command", required=True)
+    sub = parser.add_subparsers(dest="command", required=False)
 
     p_niches = sub.add_parser("niches", help="Recherche des niches rentables")
     p_niches.add_argument("topic", help="Sujet de recherche, ex: 'AI B2B newsletter' ")
@@ -740,7 +770,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_niches.set_defaults(func=cmd_niches)
 
     p_ad = sub.add_parser("adspots", help="Analyse des URLs pour trouver des spots pub")
-    p_ad.add_argument("urls", nargs="+", help="URLs sources à analyser")
+    p_ad.add_argument("urls", nargs="*", help="URLs sources à analyser")
     p_ad.add_argument("--max-links", type=int, default=40, help="Liens sortants max par page")
     p_ad.add_argument(
         "--discover-urls",
@@ -774,7 +804,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ads_list.set_defaults(func=cmd_ads_list)
 
     p_auto = sub.add_parser("auto-run", help="Lance l'automatisation et propose des placements")
-    p_auto.add_argument("urls", nargs="+", help="URLs sources à analyser")
+    p_auto.add_argument("urls", nargs="*", help="URLs sources à analyser")
     p_auto.add_argument("--max-links", type=int, default=40, help="Liens sortants max par page")
     p_auto.add_argument("--output-dir", default="outputs", help="Dossier d'export")
     p_auto.add_argument("--library", default=str(DEFAULT_AD_LIBRARY_PATH), help="Chemin bibliothèque")
@@ -833,6 +863,25 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not getattr(args, "command", None):
+        args = argparse.Namespace(
+            command="auto-run",
+            func=cmd_auto_run,
+            urls=list(DEFAULT_SEED_URLS),
+            max_links=40,
+            output_dir="outputs",
+            library=str(DEFAULT_AD_LIBRARY_PATH),
+            interval=300,
+            forever=True,
+            discover_urls=True,
+            discover_limit=20,
+            min_authorization_score=3,
+            auto_embed=True,
+            use_local_ai=True,
+            local_ai_model="llama3.2",
+            log_level="INFO",
+        )
+        print("[INFO] Aucun argument détecté: démarrage en mode full auto infini.")
     logging.basicConfig(
         level=getattr(logging, str(getattr(args, "log_level", "INFO")).upper(), logging.INFO),
         format="%(asctime)s | %(levelname)s | %(message)s",
