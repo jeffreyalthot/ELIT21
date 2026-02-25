@@ -66,6 +66,9 @@ class AdSpot:
     anchor_text: str
     ad_fit_score: int
     notes: str
+    authorization_score: int
+    authorization_notes: str
+    insertion_points: list[str]
 
 
 @dataclass
@@ -104,6 +107,72 @@ class LinkExtractor(HTMLParser):
         self.links.append((self._current_href, text))
         self._current_href = None
         self._current_text = []
+
+
+class SlotExtractor(HTMLParser):
+    """Extrait des sélecteurs candidats pour insertion publicitaire."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.points: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        allowed_tags = {"div", "aside", "section", "header", "footer", "main", "article", "nav"}
+        if tag.lower() not in allowed_tags:
+            return
+        attrs_dict = {k.lower(): (v or "") for k, v in attrs}
+        blob = f"{attrs_dict.get('id', '')} {attrs_dict.get('class', '')}".lower()
+        markers = ["ad", "sponsor", "partner", "sidebar", "banner", "widget", "promo"]
+        if any(marker in blob for marker in markers):
+            if attrs_dict.get("id"):
+                self.points.append(f"#{attrs_dict['id']}")
+            classes = [c for c in attrs_dict.get("class", "").split() if c]
+            if classes:
+                self.points.append("." + ".".join(classes[:2]))
+
+
+def extract_seed_links(source_url: str, html_text: str, max_candidates: int = 20) -> list[str]:
+    parser = LinkExtractor()
+    parser.feed(html_text)
+    base_domain = urllib.parse.urlparse(source_url).netloc
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for href, _ in parser.links:
+        normalized = normalize_url(source_url, href)
+        if not normalized:
+            continue
+        parsed = urllib.parse.urlparse(normalized)
+        if parsed.netloc != base_domain:
+            continue
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        candidates.append(normalized)
+        if len(candidates) >= max_candidates:
+            break
+    return candidates
+
+
+def discover_urls(seed_urls: Iterable[str], max_discovered_per_seed: int) -> list[str]:
+    """Découvre automatiquement de nouvelles URLs pertinentes depuis les URLs sources."""
+    discovered: list[str] = []
+    seen: set[str] = set()
+    for seed in seed_urls:
+        if seed not in seen:
+            discovered.append(seed)
+            seen.add(seed)
+        try:
+            page = fetch_url(seed)
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("[DISCOVER] Échec URL %s: %s", seed, exc)
+            continue
+        fresh_links = extract_seed_links(seed, page, max_candidates=max_discovered_per_seed)
+        for item in fresh_links:
+            if item in seen:
+                continue
+            discovered.append(item)
+            seen.add(item)
+    return discovered
 
 
 def fetch_url(url: str, timeout: int = 15) -> str:
@@ -219,7 +288,42 @@ def ad_score(anchor_text: str, target_url: str) -> tuple[int, str]:
     return score, ", ".join(reasons) or "lien sortant général"
 
 
-def find_ad_spots(source_urls: Iterable[str], max_links: int) -> list[AdSpot]:
+def analyze_authorization(target_url: str) -> tuple[int, str, list[str]]:
+    """Évalue si la page semble autoriser une insertion publicitaire."""
+    try:
+        page = fetch_url(target_url)
+    except Exception as exc:  # noqa: BLE001
+        return 0, f"page inaccessible: {exc}", []
+
+    text = page.lower()
+    score = 0
+    notes: list[str] = []
+    allow_markers = {
+        "advertise": 5,
+        "advertising": 5,
+        "sponsor": 4,
+        "sponsored": 4,
+        "media kit": 5,
+        "partner": 3,
+        "guest post": 2,
+        "contact": 1,
+    }
+    for marker, points in allow_markers.items():
+        if marker in text:
+            score += points
+            notes.append(marker)
+
+    parser = SlotExtractor()
+    parser.feed(page)
+    insertion_points = list(dict.fromkeys(parser.points))[:10]
+    if insertion_points:
+        score += min(4, len(insertion_points))
+        notes.append(f"{len(insertion_points)} slot(s) détecté(s)")
+
+    return score, ", ".join(notes) or "aucun signal d'autorisation clair", insertion_points
+
+
+def find_ad_spots(source_urls: Iterable[str], max_links: int, min_authorization_score: int = 0) -> list[AdSpot]:
     from concurrent.futures import ThreadPoolExecutor
 
     def scan_source(source: str) -> list[AdSpot]:
@@ -236,6 +340,15 @@ def find_ad_spots(source_urls: Iterable[str], max_links: int) -> list[AdSpot]:
             if urllib.parse.urlparse(normalized).netloc == urllib.parse.urlparse(source).netloc:
                 continue
             score, notes = ad_score(text, normalized)
+            authorization_score, authorization_notes, insertion_points = analyze_authorization(normalized)
+            if authorization_score < min_authorization_score:
+                LOGGER.debug(
+                    "[AUTH] Ignoré %s (score %s < min %s)",
+                    normalized,
+                    authorization_score,
+                    min_authorization_score,
+                )
+                continue
             local_spots.append(
                 AdSpot(
                     source_url=source,
@@ -243,6 +356,9 @@ def find_ad_spots(source_urls: Iterable[str], max_links: int) -> list[AdSpot]:
                     anchor_text=text,
                     ad_fit_score=score,
                     notes=notes,
+                    authorization_score=authorization_score,
+                    authorization_notes=authorization_notes,
+                    insertion_points=insertion_points,
                 )
             )
             LOGGER.debug(
@@ -346,6 +462,7 @@ def suggest_ad_placement(
     ads: list[AdCreative],
     use_local_ai: bool = False,
     local_ai_model: str = "llama3.2",
+    auto_embed: bool = False,
 ) -> list[dict[str, object]]:
     suggestions: list[dict[str, object]] = []
     if not ads:
@@ -371,8 +488,21 @@ def suggest_ad_placement(
                 "embed_code": picked.embed_code,
                 "decision_engine": decision_engine,
                 "notes": (
-                    "Suggestion uniquement: valider les autorisations du site avant "
-                    "toute publication manuelle."
+                    "Suggestion: vérifier les CGU/contrat avant publication réelle."
+                ),
+                "authorization_score": spot.authorization_score,
+                "authorization_notes": spot.authorization_notes,
+                "insertion_points": spot.insertion_points,
+                "auto_embed_ready": bool(auto_embed and spot.authorization_score > 0 and spot.insertion_points),
+                "automation_payload": (
+                    {
+                        "mode": "dom-injection-template",
+                        "target_url": spot.outbound_url,
+                        "selector": spot.insertion_points[0],
+                        "embed_code": picked.embed_code,
+                    }
+                    if auto_embed and spot.authorization_score > 0 and spot.insertion_points
+                    else None
                 ),
             }
         )
@@ -404,7 +534,12 @@ def cmd_niches(args: argparse.Namespace) -> int:
 
 
 def cmd_adspots(args: argparse.Namespace) -> int:
-    spots = find_ad_spots(args.urls, args.max_links)
+    source_urls = discover_urls(args.urls, args.discover_limit) if args.discover_urls else args.urls
+    spots = find_ad_spots(
+        source_urls,
+        args.max_links,
+        min_authorization_score=args.min_authorization_score,
+    )
     payload = [
         {
             "source_url": s.source_url,
@@ -412,6 +547,9 @@ def cmd_adspots(args: argparse.Namespace) -> int:
             "anchor_text": s.anchor_text,
             "ad_fit_score": s.ad_fit_score,
             "notes": s.notes,
+            "authorization_score": s.authorization_score,
+            "authorization_notes": s.authorization_notes,
+            "insertion_points": s.insertion_points,
         }
         for s in spots
     ]
@@ -468,12 +606,18 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
         for turn in cycle:
             cycle_started = time.perf_counter()
             LOGGER.info("[CYCLE %s] Début du cycle.", turn)
-            spots = find_ad_spots(args.urls, args.max_links)
+            source_urls = discover_urls(args.urls, args.discover_limit) if args.discover_urls else args.urls
+            spots = find_ad_spots(
+                source_urls,
+                args.max_links,
+                min_authorization_score=args.min_authorization_score,
+            )
             suggestions = suggest_ad_placement(
                 spots,
                 ads,
                 use_local_ai=args.use_local_ai,
                 local_ai_model=args.local_ai_model,
+                auto_embed=args.auto_embed,
             )
             save_json(base.with_suffix(".json"), suggestions)
             save_csv(base.with_suffix(".csv"), suggestions)
@@ -527,7 +671,16 @@ def cmd_menu(_: argparse.Namespace) -> int:
         elif selection == "2":
             urls = input("URLs (séparées par espace): ").split()
             max_links = int(input("Liens max par page (défaut 40): ").strip() or "40")
-            cmd_adspots(argparse.Namespace(urls=urls, max_links=max_links, output_dir="outputs"))
+            cmd_adspots(
+                argparse.Namespace(
+                    urls=urls,
+                    max_links=max_links,
+                    output_dir="outputs",
+                    discover_urls=True,
+                    discover_limit=20,
+                    min_authorization_score=0,
+                )
+            )
         elif selection == "3":
             name = input("Nom de la publicité: ").strip()
             niche = input("Niche cible: ").strip() or "general"
@@ -560,6 +713,12 @@ def cmd_menu(_: argparse.Namespace) -> int:
                     library=str(DEFAULT_AD_LIBRARY_PATH),
                     interval=interval,
                     forever=True,
+                    discover_urls=True,
+                    discover_limit=20,
+                    min_authorization_score=3,
+                    auto_embed=True,
+                    use_local_ai=False,
+                    local_ai_model="llama3.2",
                 )
             )
 
@@ -583,6 +742,23 @@ def build_parser() -> argparse.ArgumentParser:
     p_ad = sub.add_parser("adspots", help="Analyse des URLs pour trouver des spots pub")
     p_ad.add_argument("urls", nargs="+", help="URLs sources à analyser")
     p_ad.add_argument("--max-links", type=int, default=40, help="Liens sortants max par page")
+    p_ad.add_argument(
+        "--discover-urls",
+        action="store_true",
+        help="Découvre automatiquement de nouvelles URLs internes depuis les URLs sources",
+    )
+    p_ad.add_argument(
+        "--discover-limit",
+        type=int,
+        default=20,
+        help="Nombre max de nouvelles URLs internes par source",
+    )
+    p_ad.add_argument(
+        "--min-authorization-score",
+        type=int,
+        default=0,
+        help="Filtre les emplacements en dessous d'un score minimal d'autorisation",
+    )
     p_ad.add_argument("--output-dir", default="outputs", help="Dossier d'export")
     p_ad.set_defaults(func=cmd_adspots)
 
@@ -612,6 +788,28 @@ def build_parser() -> argparse.ArgumentParser:
         "--local-ai-model",
         default="llama3.2",
         help="Modèle Ollama à utiliser pour le matching pub (défaut: llama3.2)",
+    )
+    p_auto.add_argument(
+        "--discover-urls",
+        action="store_true",
+        help="Découvre automatiquement de nouvelles URLs internes à chaque cycle",
+    )
+    p_auto.add_argument(
+        "--discover-limit",
+        type=int,
+        default=20,
+        help="Nombre max de nouvelles URLs internes par source",
+    )
+    p_auto.add_argument(
+        "--min-authorization-score",
+        type=int,
+        default=3,
+        help="Score minimal d'autorisation pour proposer un emplacement",
+    )
+    p_auto.add_argument(
+        "--auto-embed",
+        action="store_true",
+        help="Ajoute un payload d'automatisation DOM pour l'employé sur les emplacements autorisés",
     )
     p_auto.add_argument(
         "--log-level",
