@@ -586,6 +586,7 @@ def suggest_ad_placement(
     use_local_ai: bool = False,
     local_ai_model: str = "llama3.2",
     auto_embed: bool = False,
+    force_auto_embed_all: bool = False,
 ) -> list[dict[str, object]]:
     suggestions: list[dict[str, object]] = []
     if not ads:
@@ -601,6 +602,15 @@ def suggest_ad_placement(
             if ai_pick is not None:
                 picked = ai_pick
                 decision_engine = f"ia-locale:{local_ai_model}"
+        can_auto_embed = bool(
+            auto_embed
+            and (
+                force_auto_embed_all
+                or (spot.authorization_score > 0 and bool(spot.insertion_points))
+            )
+        )
+        selector = spot.insertion_points[0] if spot.insertion_points else "body"
+
         suggestions.append(
             {
                 "source_url": spot.source_url,
@@ -616,15 +626,16 @@ def suggest_ad_placement(
                 "authorization_score": spot.authorization_score,
                 "authorization_notes": spot.authorization_notes,
                 "insertion_points": spot.insertion_points,
-                "auto_embed_ready": bool(auto_embed and spot.authorization_score > 0 and spot.insertion_points),
+                "auto_embed_ready": can_auto_embed,
                 "automation_payload": (
                     {
                         "mode": "dom-injection-template",
                         "target_url": spot.outbound_url,
-                        "selector": spot.insertion_points[0],
+                        "selector": selector,
                         "embed_code": picked.embed_code,
+                        "full_auto_fallback_selector": selector == "body" and force_auto_embed_all,
                     }
-                    if auto_embed and spot.authorization_score > 0 and spot.insertion_points
+                    if can_auto_embed
                     else None
                 ),
             }
@@ -742,6 +753,7 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
                 use_local_ai=args.use_local_ai,
                 local_ai_model=args.local_ai_model,
                 auto_embed=args.auto_embed,
+                force_auto_embed_all=getattr(args, "full_auto", False),
             )
             auto_embed_ready = sum(1 for item in suggestions if item.get("auto_embed_ready"))
             LOGGER.info(

@@ -25,7 +25,7 @@ python3 auto_employe.py
 Sans argument, le programme passe automatiquement en mode `auto-run` **infini** avec:
 - découverte d'URLs activée,
 - tentative IA locale (Ollama) activée avec fallback heuristique,
-- payload d'insertion (`--auto-embed`) activé,
+- payload d'insertion (`--auto-embed`) activé, avec insertion automatique sur **chaque** proposition en mode full-auto (fallback sélecteur `body` si aucun slot n'est détecté),
 - profil `--full-auto` appliqué (logs `DEBUG`, `--max-links 80`, `--discover-limit 40`, `--min-authorization-score 0`, `--interval 120`),
 - URLs de départ par défaut: **29 URLs** (les 5 historiques + 24 nouvelles URLs marketing/tech pour une base plus large),
 - résilience HTTP renforcée: en cas de `403 Forbidden`, l'URL est ignorée et l'automatisation continue sans interruption.
