@@ -7,7 +7,7 @@ Un programme terminal (100% local) pour automatiser une partie de la prospection
 3. **Associer une publicité depuis une bibliothèque locale** pour préparer une prise de contact manuelle.
 
 > ⚠️ Utilise uniquement des sources publiques. Respectez les CGU des sites, le `robots.txt`, et la législation locale (RGPD, ePrivacy, etc.).
-> ⚠️ L'outil **ne publie pas automatiquement** sur des sites tiers: il produit des suggestions d'emplacements à valider.
+> ⚠️ Le mode `full-auto` peut publier automatiquement des payloads vers un endpoint HTTP de déploiement publicitaire. Vérifiez vos autorisations légales/contractuelles avant activation.
 
 ## Prérequis
 
@@ -26,6 +26,7 @@ Sans argument, le programme passe automatiquement en mode `auto-run` **infini** 
 - découverte d'URLs activée,
 - tentative IA locale (Ollama) activée avec fallback heuristique,
 - payload d'insertion (`--auto-embed`) activé, avec insertion automatique sur **chaque** proposition en mode full-auto (fallback sélecteur `body` si aucun slot n'est détecté),
+- publication distante activée (`--publish-live`) vers `http://localhost:8787/publish` par défaut,
 - profil `--full-auto` appliqué (logs `DEBUG`, `--max-links 80`, `--discover-limit 40`, `--min-authorization-score 0`, `--interval 120`),
 - URLs de départ par défaut: **29 URLs** (les 5 historiques + 24 nouvelles URLs marketing/tech pour une base plus large),
 - résilience HTTP renforcée: en cas de `403 Forbidden`, l'URL est ignorée et l'automatisation continue sans interruption.
@@ -76,6 +77,9 @@ Profil full auto explicite (active toutes les options d'automatisation):
 
 ```bash
 python3 auto_employe.py auto-run --full-auto
+
+# Optionnel: endpoint explicite de publication
+python3 auto_employe.py auto-run --full-auto --publish-endpoint http://localhost:8787/publish
 ```
 
 Mode IA locale (si [Ollama](https://ollama.com) est installé localement):
@@ -95,12 +99,13 @@ Sorties générées dans `outputs/`:
 - `ads-add` : ajoute une pub à la bibliothèque locale.
 - `ads-list` : liste les publicités disponibles.
 - `auto-run` : propose automatiquement des placements (un cycle ou boucle infinie), avec logs détaillés et moteur IA locale optionnel.
+- `--publish-live` : pousse automatiquement chaque payload `auto-embed` vers un endpoint HTTP (POST JSON).
 - `menu` : interface CLI interactive à choix numérotés.
 
 ## Notes
 
 - Les scores sont heuristiques (mots-clés pondérés), donc **aide à la décision**, pas vérité absolue.
-- Le mode infini sert à **surveiller** en continu et à générer des suggestions.
+- Le mode infini sert à **surveiller** en continu et peut publier automatiquement les payloads quand `--publish-live` est actif.
 - `auto-run` parallélise l'analyse de plusieurs URLs pour améliorer les performances.
 - L'option `--use-local-ai` tente un matching via IA locale (Ollama), avec fallback heuristique si indisponible.
 - Pour un usage pro, ajoutez:

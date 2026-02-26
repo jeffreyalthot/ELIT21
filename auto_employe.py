@@ -75,6 +75,7 @@ FULL_AUTO_PROFILE = {
     "use_local_ai": True,
     "local_ai_model": "llama3.2",
     "log_level": "DEBUG",
+    "publish_live": True,
 }
 
 PROFITABLE_KEYWORDS = {
@@ -660,6 +661,48 @@ def suggest_ad_placement(
     return suggestions
 
 
+def publish_automation_payload(
+    suggestions: list[dict[str, object]],
+    endpoint: str,
+    timeout: int = 10,
+) -> tuple[int, int]:
+    """Publie les payloads d'insertion vers un endpoint d'exécution externe."""
+    published = 0
+    failed = 0
+    for item in suggestions:
+        payload = item.get("automation_payload")
+        if not payload:
+            continue
+
+        request_body = {
+            "published_at": datetime.now().isoformat(timespec="seconds"),
+            "source_url": item.get("source_url"),
+            "outbound_url": item.get("outbound_url"),
+            "selected_ad": item.get("selected_ad"),
+            "payload": payload,
+        }
+        data = json.dumps(request_body).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=data,
+            headers={"Content-Type": "application/json", "User-Agent": USER_AGENT},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                status = getattr(response, "status", 0)
+            if 200 <= int(status) < 300:
+                item["publish_status"] = "published"
+                published += 1
+                continue
+            item["publish_status"] = f"failed_http_{status}"
+            failed += 1
+        except Exception as exc:  # noqa: BLE001
+            item["publish_status"] = f"failed: {exc}"
+            failed += 1
+    return published, failed
+
+
 def cmd_niches(args: argparse.Namespace) -> int:
     results = research_niches(args.topic, args.limit)
     payload = [
@@ -745,7 +788,10 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
 
     print("[INFO] Automatisation lancée.")
     print("[INFO] Mode infini actif: Ctrl+C pour arrêter proprement.")
-    print("[INFO] Le programme ne publie rien automatiquement: il propose des emplacements.")
+    if args.publish_live:
+        print(f"[INFO] Publication automatique activée vers: {args.publish_endpoint}")
+    else:
+        print("[INFO] Mode simulation: suggestions sans publication distante.")
     print(
         "[INFO] Moteur de décision: "
         + (f"IA locale ({args.local_ai_model})" if args.use_local_ai else "Heuristique locale")
@@ -773,12 +819,21 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
                 force_auto_embed_all=getattr(args, "full_auto", False),
             )
             auto_embed_ready = sum(1 for item in suggestions if item.get("auto_embed_ready"))
+            published = 0
+            publish_failed = 0
+            if args.publish_live:
+                published, publish_failed = publish_automation_payload(
+                    suggestions,
+                    endpoint=args.publish_endpoint,
+                )
             LOGGER.info(
-                "[CYCLE %s] spots=%s | suggestions=%s | auto_embed_ready=%s",
+                "[CYCLE %s] spots=%s | suggestions=%s | auto_embed_ready=%s | published=%s | publish_failed=%s",
                 turn,
                 len(spots),
                 len(suggestions),
                 auto_embed_ready,
+                published,
+                publish_failed,
             )
             save_json(base.with_suffix(".json"), suggestions)
             save_csv(base.with_suffix(".csv"), suggestions)
@@ -786,7 +841,7 @@ def cmd_auto_run(args: argparse.Namespace) -> int:
             print(
                 f"[CYCLE {turn}] {len(suggestions)} suggestions générées. "
                 f"Fichiers: {base.with_suffix('.json')} / {base.with_suffix('.csv')}"
-                f" | durée={cycle_elapsed:.2f}s"
+                f" | publiées={published} | échecs_publication={publish_failed} | durée={cycle_elapsed:.2f}s"
             )
             if not args.forever:
                 break
@@ -807,7 +862,7 @@ def apply_full_auto_profile(args: argparse.Namespace) -> argparse.Namespace:
     print(
         "[INFO] Profil full-auto activé: "
         "--discover-urls --discover-limit 40 --use-local-ai --auto-embed "
-        "--min-authorization-score 0 --max-links 80 --interval 120 --forever --log-level DEBUG"
+        "--min-authorization-score 0 --max-links 80 --interval 120 --forever --log-level DEBUG --publish-live"
     )
     return args
 
@@ -894,6 +949,8 @@ def cmd_menu(_: argparse.Namespace) -> int:
                     discover_limit=20,
                     min_authorization_score=3,
                     auto_embed=True,
+                    publish_live=False,
+                    publish_endpoint="",
                     use_local_ai=False,
                     local_ai_model="llama3.2",
                 )
@@ -997,6 +1054,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ajoute un payload d'automatisation DOM pour l'employé sur les emplacements autorisés",
     )
     p_auto.add_argument(
+        "--publish-live",
+        action="store_true",
+        help="Publie automatiquement les payloads auto-embed vers un endpoint HTTP",
+    )
+    p_auto.add_argument(
+        "--publish-endpoint",
+        default="http://localhost:8787/publish",
+        help="Endpoint HTTP recevant les payloads de publication (POST JSON)",
+    )
+    p_auto.add_argument(
         "--log-level",
         default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -1033,6 +1100,8 @@ def main(argv: list[str] | None = None) -> int:
             discover_limit=FULL_AUTO_PROFILE["discover_limit"],
             min_authorization_score=FULL_AUTO_PROFILE["min_authorization_score"],
             auto_embed=FULL_AUTO_PROFILE["auto_embed"],
+            publish_live=FULL_AUTO_PROFILE["publish_live"],
+            publish_endpoint="http://localhost:8787/publish",
             use_local_ai=FULL_AUTO_PROFILE["use_local_ai"],
             local_ai_model=FULL_AUTO_PROFILE["local_ai_model"],
             log_level=FULL_AUTO_PROFILE["log_level"],
