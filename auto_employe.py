@@ -620,13 +620,9 @@ def suggest_ad_placement(
             if ai_pick is not None:
                 picked = ai_pick
                 decision_engine = f"ia-locale:{local_ai_model}"
-        can_auto_embed = bool(
-            auto_embed
-            and (
-                force_auto_embed_all
-                or (spot.authorization_score > 0 and bool(spot.insertion_points))
-            )
-        )
+        # Le placement automatique doit toujours pouvoir aboutir quand il est activé.
+        # Si aucun slot n'est détecté, on applique un repli sur `body`.
+        can_auto_embed = bool(auto_embed)
         selector = spot.insertion_points[0] if spot.insertion_points else "body"
 
         suggestions.append(
