@@ -10,11 +10,14 @@ from __future__ import annotations
 import argparse
 import csv
 import html
+import importlib
 import itertools
 import json
 import logging
+import os
 import re
 import shutil
+import ssl
 import subprocess
 import sys
 import time
@@ -23,6 +26,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
+from functools import lru_cache
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable
@@ -241,13 +245,32 @@ def discover_urls(seed_urls: Iterable[str], max_discovered_per_seed: int) -> lis
     return discovered
 
 
+@lru_cache(maxsize=1)
+def get_ssl_context() -> ssl.SSLContext:
+    """Construit un contexte SSL robuste (CA système + certifi optionnel)."""
+    if os.getenv("AUTO_EMPLOYE_INSECURE_SSL", "").lower() in {"1", "true", "yes", "on"}:
+        return ssl._create_unverified_context()  # noqa: SLF001
+
+    cert_file = os.getenv("SSL_CERT_FILE") or os.getenv("REQUESTS_CA_BUNDLE")
+    if cert_file:
+        return ssl.create_default_context(cafile=cert_file)
+
+    if importlib.util.find_spec("certifi"):
+        certifi_module = importlib.import_module("certifi")
+        certifi_path = certifi_module.where()
+        if certifi_path:
+            return ssl.create_default_context(cafile=certifi_path)
+
+    return ssl.create_default_context()
+
+
 def fetch_url(url: str, timeout: int = 15, retries: int = 2, retry_delay: float = 1.0) -> str:
     """Télécharge une URL avec tolérance aux erreurs (incluant HTTP 403)."""
     for attempt in range(1, retries + 2):
         LOGGER.debug("[HTTP] Navigation vers %s (tentative %s/%s)", url, attempt, retries + 1)
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as response:
                 charset = response.headers.get_content_charset() or "utf-8"
                 payload = response.read().decode(charset, errors="replace")
             LOGGER.debug("[HTTP] Navigation terminée %s | %s caractères", url, len(payload))
@@ -685,7 +708,7 @@ def publish_automation_payload(
             method="POST",
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with urllib.request.urlopen(req, timeout=timeout, context=get_ssl_context()) as response:
                 status = getattr(response, "status", 0)
             if 200 <= int(status) < 300:
                 item["publish_status"] = "published"
@@ -964,6 +987,16 @@ def build_parser() -> argparse.ArgumentParser:
             "où proposer de la publicité (URL publiques)."
         ),
     )
+    parser.add_argument(
+        "--cert-file",
+        default="",
+        help="Chemin vers un bundle CA (PEM) à utiliser pour la vérification SSL.",
+    )
+    parser.add_argument(
+        "--insecure-ssl",
+        action="store_true",
+        help="Désactive la vérification SSL (à éviter, usage dépannage uniquement).",
+    )
     sub = parser.add_subparsers(dest="command", required=False)
 
     p_niches = sub.add_parser("niches", help="Recherche des niches rentables")
@@ -1091,6 +1124,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if getattr(args, "cert_file", ""):
+        os.environ["SSL_CERT_FILE"] = str(args.cert_file)
+    if getattr(args, "insecure_ssl", False):
+        os.environ["AUTO_EMPLOYE_INSECURE_SSL"] = "1"
     if not getattr(args, "command", None):
         args = argparse.Namespace(
             command="auto-run",

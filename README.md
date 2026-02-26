@@ -117,3 +117,19 @@ Sorties générées dans `outputs/`:
   - enrichissement CRM,
   - vérification légale automatisée,
   - workflow de validation humaine avant publication.
+
+## Dépannage SSL (certificate verify failed)
+
+Si vous voyez une erreur du type `certificate verify failed: unable to get local issuer certificate`, vous pouvez :
+
+1. Fournir explicitement un bundle CA:
+
+```bash
+python3 auto_employe.py --cert-file /chemin/vers/cacert.pem auto-run https://example.com
+```
+
+2. En dernier recours uniquement (non recommandé en production), désactiver la vérification SSL:
+
+```bash
+python3 auto_employe.py --insecure-ssl auto-run https://example.com
+```
