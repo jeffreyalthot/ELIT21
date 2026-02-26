@@ -776,6 +776,9 @@ def cmd_ads_list(args: argparse.Namespace) -> int:
 
 
 def cmd_auto_run(args: argparse.Namespace) -> int:
+    if getattr(args, "auto_injection", False):
+        args.auto_embed = True
+
     ads = load_or_bootstrap_ads(Path(args.library))
 
     cycle = itertools.count(1)
@@ -1048,6 +1051,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--auto-embed",
         action="store_true",
         help="Ajoute un payload d'automatisation DOM pour l'employé sur les emplacements autorisés",
+    )
+    p_auto.add_argument(
+        "--auto-injection",
+        "--injection-automatique",
+        dest="auto_injection",
+        action="store_true",
+        help="Alias métier de --auto-embed pour forcer les placements en injection automatique",
     )
     p_auto.add_argument(
         "--publish-live",

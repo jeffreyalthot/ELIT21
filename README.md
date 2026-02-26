@@ -80,6 +80,9 @@ python3 auto_employe.py auto-run --full-auto
 
 # Optionnel: endpoint explicite de publication
 python3 auto_employe.py auto-run --full-auto --publish-endpoint http://localhost:8787/publish
+
+# Variante explicite: placement automatique en injection automatique
+python3 auto_employe.py auto-run --auto-injection
 ```
 
 Mode IA locale (si [Ollama](https://ollama.com) est installé localement):
@@ -99,6 +102,7 @@ Sorties générées dans `outputs/`:
 - `ads-add` : ajoute une pub à la bibliothèque locale.
 - `ads-list` : liste les publicités disponibles.
 - `auto-run` : propose automatiquement des placements (un cycle ou boucle infinie), avec logs détaillés et moteur IA locale optionnel.
+- `--auto-injection` / `--injection-automatique` : alias de `--auto-embed` pour générer les placements en mode injection automatique.
 - `--publish-live` : pousse automatiquement chaque payload `auto-embed` vers un endpoint HTTP (POST JSON).
 - `menu` : interface CLI interactive à choix numérotés.
 
